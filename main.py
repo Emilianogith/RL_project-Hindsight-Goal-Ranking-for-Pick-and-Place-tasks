@@ -7,7 +7,6 @@ import numpy as np
 
 from DDPG import Policy
 
-#print(gym.envs.registry.keys())
 
 def evaluate(env=None, n_episodes=1, render=False):
     agent = Policy()

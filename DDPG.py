@@ -110,9 +110,8 @@ class Policy(nn.Module):
         with torch.no_grad():
             actions = np.array(self.target_actor(state, desired_goal))
 
-        # clamp ???
         actions = np.hstack([actions, np.zeros((actions.shape[0], 1))])                # add 0 as the 4-th actions (in Reach task it is useless)
-        #print('actions: ', actions[0])
+        print('actions: ', actions[0])
         return actions[0]
 
     def noisy_action(self, observation, noise_factor):
@@ -187,10 +186,11 @@ class Policy(nn.Module):
 
                 critic_loss = []
                 actor_loss = []
+                importance_sampling = []
                 for k in range (self.batch_size):
-                    episode_idx = self.replay_buffer.sample_episode()                                       # sample an episode
-                    experience, new_goal = self.replay_buffer.sample_experience_and_goal(episode_idx)       # sample an experience with an hindsight goal according to the Future startegy
-                                                                                                            # here experience = (sj,aj,sj+1,delta_array, done)
+                    episode_idx = self.replay_buffer.sample_episode()                                             # sample an episode
+                    experience, new_goal, j, i = self.replay_buffer.sample_experience_and_goal(episode_idx)       # sample an experience with an hindsight goal according to the Future startegy
+                                                                                                                  # here experience = (sj,aj,sj+1,delta_array, done)
                     if experience[4] == True: raise ValueError('done=True?????')
 
                     obs = torch.tensor(experience[0]['observation'], dtype=torch.float32).to(self.device)         
@@ -201,23 +201,21 @@ class Policy(nn.Module):
                     new_reward = self.compute_reward(next_obs,new_goal) 
 
                     # Compute importance sampling
-                    wji = ...
+                    w = self.replay_buffer.get_importance_sampling(episode_idx, j, i)
+                    importance_sampling.append(w)
 
                     target_mu = self.target_actor(next_obs, new_goal).detach()                                       # mu(s_(j+1) ||g_i)
-                    Q_value = self.critic(obs, action, new_goal)                                            # Q(s_j, a_j || g_i)
+                    Q_value = self.critic(obs, action, new_goal)                                                     # Q(s_j, a_j || g_i)
                     new_Q_value = self.target_critic(next_obs, target_mu, new_goal).detach()                         # Q_target(s_(j+1), mu(s_(j+1) ||g_i) || g_i)
                     
                     # Compute TD error
-                    delta = new_reward + self.gamma * new_Q_value - Q_value
+                    delta = (new_reward + self.gamma * new_Q_value - Q_value)[0]
 
-                    # Insert delta in buffer
-                    ...
-
-                    # Update the probabilities
-                    ...
+                    # Insert delta in buffer and Update the probabilities
+                    self.replay_buffer.update_delta_and_probs(delta.detach().item(), episode_idx, j, i)
 
                     # Compute losses
-                    critic_loss_k = delta ** 2
+                    critic_loss_k = w * delta ** 2
 
                     mu = self.actor(obs, new_goal)
                     actor_loss_k = - self.critic(obs, mu, new_goal)  
@@ -239,6 +237,9 @@ class Policy(nn.Module):
                 # endregion
 
                 # Update networks
+                actor_loss = [loss / max(importance_sampling) for loss in actor_loss]
+                critic_loss = [loss / max(importance_sampling) for loss in critic_loss]
+
                 actor_loss = torch.mean(torch.stack(actor_loss))
                 critic_loss = torch.mean(torch.stack(critic_loss))
 
@@ -296,3 +297,6 @@ if __name__ == "__main__":
     
     # FOR DEBUGGING
     agent.train()
+
+
+    # accumulate the reward for evaluation
