@@ -3,13 +3,16 @@ import torch.optim as optim
 import torch.nn as nn
 import torch.nn.functional as F
 import os
+import time
 
 import gymnasium as gym
 import gymnasium_robotics
 
 import numpy as np
+import json
 
 from HGR import ReplayBuffer
+from utils import *
 
 # Define the actor-critic model
 class Actor(nn.Module):
@@ -26,6 +29,7 @@ class Actor(nn.Module):
             nn.init.zeros_(layer.bias)
 
     def forward(self, state, goal):
+        #  Metti qualche batch normalization
         x = torch.cat([state, goal], dim=-1)
         x = F.relu(self.linear1(x))
         x = F.relu(self.linear2(x))
@@ -87,7 +91,7 @@ class Policy(nn.Module):
         self.target_critic.load_state_dict(self.critic.state_dict())
 
         # HYPERPARAMETERS
-        self.epochs = 5                             # n. of epochs during training. It is egual to the n. of episodes 
+        self.epochs = 10000                             # n. of epochs during training. It is egual to the n. of episodes 
         self.batch_size = 4                         # batch size
         self.update_freq = 1                        # defines the network update frequency during training
         self.H = 50                                 # the horizon of one episode. Keep in mind the episode ends if we collect negative rewards for 50 consecutive steps
@@ -98,6 +102,16 @@ class Policy(nn.Module):
 
         # initialize the buffer
         self.replay_buffer = ReplayBuffer(capacity=10, episode_horizon=self.H)#10000)
+
+        # Initialize the logs for the evaluation
+        self.training_logs = {
+                "n_episodes": 0,
+                "reward_per_episode": [],
+                "actor_loss": [],
+                "critic_loss": [],
+                "training_time": []
+            }
+        self.start_epoch = 1
 
     def act(self, observation):
         """ used only in the main.py it gets one state as input and return the actions"""
@@ -111,19 +125,20 @@ class Policy(nn.Module):
             actions = np.array(self.target_actor(state, desired_goal))
 
         actions = np.hstack([actions, np.zeros((actions.shape[0], 1))])                # add 0 as the 4-th actions (in Reach task it is useless)
-        print('actions: ', actions[0])
+        #print('actions: ', actions[0])
         return actions[0]
 
     def noisy_action(self, observation, noise_factor):
         self.actor.eval()
 
         # preprocessing
-        state =  torch.tensor(observation['observation'], dtype=torch.float32).unsqueeze(0)
-        desired_goal =  torch.tensor(observation['desired_goal'], dtype=torch.float32).unsqueeze(0)
+        state =  torch.tensor(observation['observation'], dtype=torch.float32).unsqueeze(0).to(self.device)
+        desired_goal =  torch.tensor(observation['desired_goal'], dtype=torch.float32).unsqueeze(0).to(self.device)
     
         with torch.no_grad():
-            actions = np.array(self.actor(state, desired_goal))[0]
+            actions = np.array(self.actor(state, desired_goal).cpu())[0]
 
+        # Improvement use Ornstein-Uhlenbeck noise
         noise = np.random.uniform(-1, 1, size=actions.shape) * noise_factor            # Noise in the range [-1, 1] 
         actions += noise
         return actions
@@ -132,12 +147,13 @@ class Policy(nn.Module):
         obs, _ = self.env.reset()                                                      # obs contains the state and the goal
         done = False
 
-        for _ in range(self.H):
+        total_reward = 0
+        for i in range(self.H):
             # Sample an action
             action = self.noisy_action(obs, noise_factor)
             action_4dim = np.hstack([action, np.zeros(1)])                             # append the last element as 0 to get a 4-dim action
             next_obs, reward, terminated, truncated, info = self.env.step(action_4dim)
-            done = terminated or truncated
+            done = False if i != self.H -1 else True
 
             noise_factor *= decay
 
@@ -145,6 +161,8 @@ class Policy(nn.Module):
             self.replay_buffer.push(obs, action, next_obs, done)
 
             obs = next_obs
+            total_reward += reward
+        return total_reward                                                             # for the evaluation metric
 
     def compute_reward(self, next_obs, new_goal):
         ee_position = next_obs[:-7]
@@ -155,7 +173,7 @@ class Policy(nn.Module):
         else:
             return -1
 
-    def train(self):
+    def train(self, lr_actor = 1e-3, lr_critic =1e-3):
         # Load the weights if model.pt exists
         if os.path.exists('model.pt'):
             self.load()                                                                 # load target actor and critic
@@ -167,19 +185,20 @@ class Policy(nn.Module):
             self.critic.to(self.device)
 
         # Initialize the optimizers for actor and critic
-        actor_optimizer = optim.Adam(self.actor.parameters(), lr=1e-3)
-        critic_optimizer = optim.Adam(self.critic.parameters(), lr=1e-3)
+        actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr_actor)
+        critic_optimizer = optim.Adam(self.critic.parameters(), lr=lr_critic)
 
+        start_time=time.time()
         # Training loop
-        for epoch in range(self.epochs):                # for each episode
+        for epoch in range(self.start_epoch, self.epochs + 1):                # for each episode
             
             # Rollout phase
-            self.rollout()
+            total_reward = self.rollout()
 
             # Batch computation with update frequency
             if epoch % self.update_freq == 0:
                 self.replay_buffer.set_probabilities()                                                      # set the probabilities such that they sum up to 1 before sampling 
-                
+
                 # set the actor-critic in training mode 
                 self.actor.train()
                 self.critic.train()
@@ -198,7 +217,7 @@ class Policy(nn.Module):
                     next_obs = torch.tensor(experience[2]['observation'],dtype=torch.float32).to(self.device)  
                     new_goal = torch.from_numpy(new_goal).to(dtype=torch.float32).to(self.device)  
 
-                    new_reward = self.compute_reward(next_obs,new_goal) 
+                    new_reward = self.compute_reward(next_obs.cpu(),new_goal.cpu()) 
 
                     # Compute importance sampling
                     w = self.replay_buffer.get_importance_sampling(episode_idx, j, i)
@@ -222,19 +241,6 @@ class Policy(nn.Module):
 
                     critic_loss.append(critic_loss_k)
                     actor_loss.append(actor_loss_k)
-                    # region work succesfully
-                    # actor_loss += actor_loss_k
-                    # critic_loss += critic_loss_k
-
-                # actor_loss /= self.batch_size
-                # critic_loss /= self.batch_size
-                # actor_optimizer.zero_grad()
-                # actor_loss.backward()  
-                # actor_optimizer.step()
-                # critic_optimizer.zero_grad()
-                # critic_loss.backward()  
-                # critic_optimizer.step()
-                # endregion
 
                 # Update networks
                 actor_loss = [loss / max(importance_sampling) for loss in actor_loss]
@@ -261,11 +267,27 @@ class Policy(nn.Module):
                 self.soft_update(self.target_actor, self.actor)
                 self.soft_update(self.target_critic, self.critic)
 
-            print(f"Epoch {epoch + 1}/{self.epochs}, Actor loss: {actor_loss.item()}, , Critic loss: {critic_loss.item()}")
-        
+                self.training_logs['actor_loss'].append(actor_loss.detach().item())
+                self.training_logs['critic_loss'].append(critic_loss.detach().item())
+
+                print(f"Epoch {epoch}/{self.epochs}, Actor loss: {actor_loss.item()}, , Critic loss: {critic_loss.item()}")
+            
+            self.training_logs['reward_per_episode'].append(total_reward)
+
             # save after tot epochs
-            if (epoch +1) % self.save_freq == 0:
+            if (epoch) % self.save_freq == 0:
+                current_time = time.time()
+                self.training_logs['training_time'].append((current_time-start_time)/3600)
+                self.training_logs['n_episodes'] = epoch
                 self.save()
+                
+                self.training_logs = {
+                "n_episodes": 0,
+                "reward_per_episode": [],
+                "actor_loss": [],
+                "critic_loss": [],
+                "training_time":[]
+            }
 
     def soft_update(self, target_net, main_net):
         # Soft update for target net
@@ -273,17 +295,84 @@ class Policy(nn.Module):
             target_param.data.copy_(self.tau * local_param.data + (1.0 - self.tau) * target_param.data)
 
     def save(self):
-        # salva anche le loss per plottare il gragico
         torch.save({
             'actor': self.target_actor.state_dict(),
             'critic': self.target_critic.state_dict()
                     }, 'model.pt')
+        
+        # Save the logs
+        file_path = 'training_logs.json'
+        if os.path.exists(file_path):
+            with open(file_path, 'r') as f:
+                old_data = json.load(f)
+            old_data['training_time'].append(old_data['training_time'][-1]+self.training_logs['training_time'][-1])
+            old_data['n_episodes'] = self.training_logs['n_episodes']
+            old_data['reward_per_episode'].extend(self.training_logs['reward_per_episode'])
+            old_data['actor_loss'].extend(self.training_logs['actor_loss'])
+            old_data['critic_loss'].extend(self.training_logs['critic_loss'])
+        else:
+            old_data = self.training_logs
+
+        with open(file_path, 'w') as f:
+            json.dump(old_data, f, indent=4)
 
     def load(self):
         checkpoint = torch.load('model.pt', map_location=self.device)
         self.target_actor.load_state_dict(checkpoint['actor'])
         self.target_critic.load_state_dict(checkpoint['critic'])
         print("weights loaded for actor and critic!")
+
+        file_path = 'training_logs.json'
+        if os.path.exists(file_path):
+            with open('training_logs.json', 'r') as f:
+                logs = json.load(f)
+                self.start_epoch = logs['n_episodes'] + 1
+
+    def plot_training_logs(self):
+        try:
+            with open('training_logs.json', 'r') as f:
+                logs = json.load(f)
+            
+            success_rate = []
+            success = 0
+            for i,rew in enumerate(logs['reward_per_episode']):
+                if rew > -50:
+                    success +=1
+                if (i+1) % self.save_freq == 0:
+                    success_rate.append(success/logs['n_episodes'])
+
+            plot_logs(logs['reward_per_episode'], 
+                      success_rate, 
+                      logs['training_time'],
+                      logs['actor_loss'],
+                      logs['critic_loss'],
+                      self.update_freq
+                      )
+
+        except FileNotFoundError:
+            print("Error: File 'training_logs.json' not found.")
+
+    def test(self, n_episodes=20):
+        agent.load()
+
+        env = gym.make("FetchReach-v3", max_episode_steps=50)
+            
+        rewards = []
+        for episode in range(n_episodes):
+            total_reward = 0
+            done = False
+            s, _ = env.reset()
+            while not done:
+                action = agent.act(s)
+                
+                s, reward, terminated, truncated, info = env.step(action)
+                done = terminated or truncated
+                total_reward += reward
+            
+            rewards.append(total_reward)
+            
+        print(f'Mean Reward in {n_episodes} episodes:', np.mean(rewards))
+        plot_test(rewards)
 
     def to(self, device):
         ret = super().to(device)
@@ -298,5 +387,8 @@ if __name__ == "__main__":
     # FOR DEBUGGING
     agent.train()
 
+    # plot logs
+    #agent.plot_training_logs()
 
-    # accumulate the reward for evaluation
+    # test results
+    #agent.test()

@@ -25,9 +25,9 @@ class ReplayBuffer:
         self.alpha_prime=0.6
         self.beta=0.4
         self.beta_prime=0.4
-        self.epsilon = 0.001
+        self.epsilon = 0.001                    # small positicve constant to be addedd to delta_ji in order to avoid 0 probability 
 
-        self.max_delta = self.epsilon           # initialized as self.epsilon, AGGIORNA QUANDO IMMETTI DELTA_JI
+        self.max_delta = self.epsilon           # initialized as self.epsilon
 
     def push(self, obs, action, next_obs, done):
 
@@ -37,7 +37,7 @@ class ReplayBuffer:
             remaining_length = self.H - 1
         else:
             remaining_length = self.H - len(self.buffer[-1]) - 1
-
+        
         delta_array = [self.max_delta for i in range(remaining_length)]
         self.buffer[-1].append((obs, action, next_obs, delta_array, done))
 
@@ -60,7 +60,6 @@ class ReplayBuffer:
             K += len(delta_array)
         # print('possible experience-goal combinations',K)        # K = 1225= H*(H-1)/2
         return episode_delta / K
-
        
     def set_probabilities(self):
         # set goal_prioritization_probs
@@ -74,7 +73,7 @@ class ReplayBuffer:
             for j,experience in enumerate(episode[0][:-1]):      # for j = 1,.. H-1
                 delta_array = experience[3]
                 self.goal_prioritization_probs[idx].append([])
-                for delta_ji in delta_array:       # for i = j+1,...H
+                for delta_ji in delta_array:                     # for i = j+1,...H
                     if delta_ji == 0: raise ValueError("IMPOSSIBLE: delta_ji egual to 0")
                     delta_ji = np.abs(delta_ji) ** self.alpha_prime 
                     self.goal_prioritization_probs[idx][j].append(delta_ji)
