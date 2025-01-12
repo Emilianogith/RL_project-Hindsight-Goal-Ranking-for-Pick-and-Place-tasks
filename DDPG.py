@@ -197,7 +197,7 @@ class Policy(nn.Module):
 
             # Batch computation with update frequency
             if epoch % self.update_freq == 0:
-                self.replay_buffer.set_probabilities()                                                      # set the probabilities such that they sum up to 1 before sampling 
+                self.replay_buffer.set_probabilities()                        # set the probabilities such that they sum up to 1 before sampling 
 
                 # set the actor-critic in training mode 
                 self.actor.train()
@@ -223,13 +223,15 @@ class Policy(nn.Module):
                     w = self.replay_buffer.get_importance_sampling(episode_idx, j, i)
                     importance_sampling.append(w)
 
-                    target_mu = self.target_actor(next_obs, new_goal).detach()                                       # mu(s_(j+1) ||g_i)
-                    Q_value = self.critic(obs, action, new_goal)                                                     # Q(s_j, a_j || g_i)
-                    new_Q_value = self.target_critic(next_obs, target_mu, new_goal).detach()                         # Q_target(s_(j+1), mu(s_(j+1) ||g_i) || g_i)
+                    with torch.no_grad():
+                        target_mu = self.target_actor(next_obs, new_goal).detach()                                       # mu(s_(j+1) ||g_i)
+                        next_Q_value = self.target_critic(next_obs, target_mu, new_goal).detach()                        # Q_target(s_(j+1), mu(s_(j+1) ||g_i) || g_i)
+                    
+                    Q_value = self.critic(obs, action, new_goal)                                                         # Q(s_j, a_j || g_i)
                     
                     # Compute TD error
-                    delta = (new_reward + self.gamma * new_Q_value - Q_value)[0]
-
+                    delta = (new_reward + self.gamma * next_Q_value - Q_value).squeeze(0)
+                    
                     # Insert delta in buffer and Update the probabilities
                     self.replay_buffer.update_delta_and_probs(delta.detach().item(), episode_idx, j, i)
 
@@ -324,7 +326,7 @@ class Policy(nn.Module):
 
         file_path = 'training_logs.json'
         if os.path.exists(file_path):
-            with open('training_logs.json', 'r') as f:
+            with open(file_path, 'r') as f:
                 logs = json.load(f)
                 self.start_epoch = logs['n_episodes'] + 1
 

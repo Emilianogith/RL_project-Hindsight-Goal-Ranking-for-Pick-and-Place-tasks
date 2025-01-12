@@ -7,7 +7,8 @@ class ReplayBuffer:
         """
         Buffer structure:
 
-          |              ------episode-----               |
+            |-------------------episode-------------------|                 
+            |-------------experience-------------|        
         [ [ [obs,action,next_obs,delta_array,done], [],.. ] , delta_episode ] , [] ]
 
         """
@@ -56,7 +57,7 @@ class ReplayBuffer:
         K = 0
         for experience in episode:
             delta_array = experience[3]
-            episode_delta += np.abs(np.sum(delta_array))
+            episode_delta += np.sum(np.abs(delta_array))
             K += len(delta_array)
         # print('possible experience-goal combinations',K)        # K = 1225= H*(H-1)/2
         return episode_delta / K
@@ -121,7 +122,7 @@ class ReplayBuffer:
         self.buffer[episode][0][j][3][i] = delta
 
         if delta > self.max_delta: 
-            self.max_delta = delta + self.epsilon
+            self.max_delta = delta + self.epsilon                                                 # small positicve constant to be addedd to delta_ji in order to avoid 0 probability
         
         self.buffer[episode][1] = self.compute_episode_delta(episode= self.buffer[episode][0])
         self.update_probabilities(episode)
@@ -141,7 +142,7 @@ class ReplayBuffer:
         goal_norm_factor = 0
         for j,experience in enumerate(self.buffer[episode_idx][0][:-1]):      # for j = 1,.. H-1
             delta_array = experience[3]
-            for i,delta_ji in enumerate(delta_array):       # for i = j+1,...H
+            for i,delta_ji in enumerate(delta_array):                         # for i = j+1,...H
                 if delta_ji == 0: raise ValueError("IMPOSSIBLE: delta_ji egual to 0")
                 delta_ji = np.abs(delta_ji) ** self.alpha_prime 
                 self.goal_prioritization_probs[episode_idx][j][i] = delta_ji
