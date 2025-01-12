@@ -10,6 +10,7 @@ import gymnasium_robotics
 
 import numpy as np
 import json
+import pickle
 
 from HGR import ReplayBuffer
 from utils import *
@@ -91,7 +92,7 @@ class Policy(nn.Module):
         self.target_critic.load_state_dict(self.critic.state_dict())
 
         # HYPERPARAMETERS
-        self.epochs = 10000                             # n. of epochs during training. It is egual to the n. of episodes 
+        self.epochs = 10000                         # n. of epochs during training. It is egual to the n. of episodes 
         self.batch_size = 4                         # batch size
         self.update_freq = 1                        # defines the network update frequency during training
         self.H = 50                                 # the horizon of one episode. Keep in mind the episode ends if we collect negative rewards for 50 consecutive steps
@@ -176,7 +177,7 @@ class Policy(nn.Module):
     def train(self, lr_actor = 1e-3, lr_critic =1e-3):
         # Load the weights if model.pt exists
         if os.path.exists('model.pt'):
-            self.load()                                                                 # load target actor and critic
+            self.load(load_for_training=True)                                                                 # load target actor and critic
             self.actor.load_state_dict(self.target_actor.state_dict())                  # copy the weights in the actor network
             self.critic.load_state_dict(self.target_critic.state_dict())                # copy the weights in the critic network
             self.target_actor.to(self.device)
@@ -212,12 +213,12 @@ class Policy(nn.Module):
                                                                                                                   # here experience = (sj,aj,sj+1,delta_array, done)
                     if experience[4] == True: raise ValueError('done=True?????')
 
-                    obs = torch.tensor(experience[0]['observation'], dtype=torch.float32).to(self.device)         
-                    action = torch.tensor(experience[1],dtype=torch.float32).to(self.device)  
-                    next_obs = torch.tensor(experience[2]['observation'],dtype=torch.float32).to(self.device)  
-                    new_goal = torch.from_numpy(new_goal).to(dtype=torch.float32).to(self.device)  
+                    obs = torch.tensor(experience[0]['observation'], dtype=torch.float32).unsqueeze(0).to(self.device)
+                    action = torch.tensor(experience[1],dtype=torch.float32).unsqueeze(0).to(self.device)  
+                    next_obs = torch.tensor(experience[2]['observation'],dtype=torch.float32).unsqueeze(0).to(self.device)  
+                    new_goal = torch.from_numpy(new_goal).to(dtype=torch.float32).unsqueeze(0).to(self.device)  
 
-                    new_reward = self.compute_reward(next_obs.cpu(),new_goal.cpu()) 
+                    new_reward = self.compute_reward(next_obs.squeeze(0).cpu(),new_goal.squeeze(0).cpu()) 
 
                     # Compute importance sampling
                     w = self.replay_buffer.get_importance_sampling(episode_idx, j, i)
@@ -245,8 +246,9 @@ class Policy(nn.Module):
                     actor_loss.append(actor_loss_k)
 
                 # Update networks
-                actor_loss = [loss / max(importance_sampling) for loss in actor_loss]
-                critic_loss = [loss / max(importance_sampling) for loss in critic_loss]
+                max_w = max(importance_sampling)
+                actor_loss = [loss / max_w for loss in actor_loss]
+                critic_loss = [loss / max_w for loss in critic_loss]
 
                 actor_loss = torch.mean(torch.stack(actor_loss))
                 critic_loss = torch.mean(torch.stack(critic_loss))
@@ -297,6 +299,7 @@ class Policy(nn.Module):
             target_param.data.copy_(self.tau * local_param.data + (1.0 - self.tau) * target_param.data)
 
     def save(self):
+        # Save the model
         torch.save({
             'actor': self.target_actor.state_dict(),
             'critic': self.target_critic.state_dict()
@@ -305,8 +308,8 @@ class Policy(nn.Module):
         # Save the logs
         file_path = 'training_logs.json'
         if os.path.exists(file_path):
-            with open(file_path, 'r') as f:
-                old_data = json.load(f)
+            with open(file_path, 'r') as fl:
+                old_data = json.load(fl)
             old_data['training_time'].append(old_data['training_time'][-1]+self.training_logs['training_time'][-1])
             old_data['n_episodes'] = self.training_logs['n_episodes']
             old_data['reward_per_episode'].extend(self.training_logs['reward_per_episode'])
@@ -318,17 +321,34 @@ class Policy(nn.Module):
         with open(file_path, 'w') as f:
             json.dump(old_data, f, indent=4)
 
-    def load(self):
+        # Save the buffer
+        with open('buffer.pkl', 'wb') as file:
+            pickle.dump(self.replay_buffer, file)
+
+
+    def load(self, load_for_training = False):
+        # Load the model
         checkpoint = torch.load('model.pt', map_location=self.device)
         self.target_actor.load_state_dict(checkpoint['actor'])
         self.target_critic.load_state_dict(checkpoint['critic'])
         print("weights loaded for actor and critic!")
 
-        file_path = 'training_logs.json'
-        if os.path.exists(file_path):
-            with open(file_path, 'r') as f:
-                logs = json.load(f)
-                self.start_epoch = logs['n_episodes'] + 1
+        # For training:
+        if load_for_training:
+            # Load the current epoch
+            file_path = 'training_logs.json'
+            if os.path.exists(file_path):
+                with open(file_path, 'r') as f_load:
+                    logs = json.load(f_load)
+                    self.start_epoch = logs['n_episodes'] + 1
+
+            # Load the buffer
+            if os.path.exists('buffer.pkl'):
+                with open('buffer.pkl', 'rb') as file_load:
+                    self.replay_buffer = pickle.load(file_load)
+                    print('buffer loaded')
+                    print('len buffer', len(self.replay_buffer.buffer))
+                    print('max_delta', self.replay_buffer.max_delta)
 
     def plot_training_logs(self):
         try:
@@ -354,7 +374,7 @@ class Policy(nn.Module):
         except FileNotFoundError:
             print("Error: File 'training_logs.json' not found.")
 
-    def test(self, n_episodes=20):
+    def test(self, n_episodes=100):
         agent.load()
 
         env = gym.make("FetchReach-v3", max_episode_steps=50)
