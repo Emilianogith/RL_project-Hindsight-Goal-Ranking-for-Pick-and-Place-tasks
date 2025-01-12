@@ -92,17 +92,17 @@ class Policy(nn.Module):
         self.target_critic.load_state_dict(self.critic.state_dict())
 
         # HYPERPARAMETERS
-        self.epochs = 10000                         # n. of epochs during training. It is egual to the n. of episodes 
-        self.batch_size = 4                         # batch size
-        self.update_freq = 1                        # defines the network update frequency during training
+        self.epochs = 20000                         # n. of epochs during training. It is egual to the n. of episodes 
+        self.batch_size = 100                         # batch size
+        self.update_freq = 100                        # defines the network update frequency during training
         self.H = 50                                 # the horizon of one episode. Keep in mind the episode ends if we collect negative rewards for 50 consecutive steps
         self.rho = 0.05                             # defines the distance to the goal in which the reward is positive. Used in compute_reward
         self.gamma = 0.98                           # discount factor
-        self.save_freq = 5                          # determines the after how much episodes the model is saved
-        self.tau = 0.005                            # parameter for the soft update
+        self.save_freq = 500                          # determines the after how much episodes the model is saved
+        self.tau = 0.05                            # parameter for the soft update
 
         # initialize the buffer
-        self.replay_buffer = ReplayBuffer(capacity=10, episode_horizon=self.H)#10000)
+        self.replay_buffer = ReplayBuffer(capacity=1000000, episode_horizon=self.H)#10000)
 
         # Initialize the logs for the evaluation
         self.training_logs = {
@@ -129,7 +129,7 @@ class Policy(nn.Module):
         #print('actions: ', actions[0])
         return actions[0]
 
-    def noisy_action(self, observation, noise_factor):
+    def noisy_action(self, observation, noise_factor, noise_type ='Uniform'):               # noise = {Uniform, Gaussian, Ornstein-Uhlenbeck}
         self.actor.eval()
 
         # preprocessing
@@ -140,7 +140,22 @@ class Policy(nn.Module):
             actions = np.array(self.actor(state, desired_goal).cpu())[0]
 
         # Improvement use Ornstein-Uhlenbeck noise
-        noise = np.random.uniform(-1, 1, size=actions.shape) * noise_factor            # Noise in the range [-1, 1] 
+        if noise_type == 'Uniform':
+            # Uniform noise in the range [-1, 1]
+            noise = np.random.uniform(-1, 1, size=actions.shape) * noise_factor
+        if noise_type == 'Gaussian':
+            # Gaussian noise with mean 0 and standard deviation 0.2
+            noise = np.random.normal(0, 0.2, size=actions.shape) * noise_factor         
+        if noise_type == 'Ornstein-Uhlenbeck':
+            pass
+            # Ornstein-Uhlenbeck process
+            # Implement ...
+            # ou_state += theta * (-ou_state) * self.dt + \
+            #                  self.sigma * np.sqrt(self.dt) * np.random.normal(size=self.action_dim)
+            # noise = self.ou_state * self.noise_factor      
+
+        # Implement epsilon greedy...
+
         actions += noise
         return actions
     
@@ -174,7 +189,7 @@ class Policy(nn.Module):
         else:
             return -1
 
-    def train(self, lr_actor = 1e-3, lr_critic =1e-3):
+    def train(self, lr_actor = 1e-3, lr_critic =1e-3, l2_lambda=0):     # ATTENTION: l2_lambda=1 but it dominates the loss function
         # Load the weights if model.pt exists
         if os.path.exists('model.pt'):
             self.load(load_for_training=True)                                                                 # load target actor and critic
@@ -240,7 +255,9 @@ class Policy(nn.Module):
                     critic_loss_k = w * delta ** 2
 
                     mu = self.actor(obs, new_goal)
-                    actor_loss_k = - self.critic(obs, mu, new_goal)  
+                    # L2-regularization
+                    l2_reg = l2_lambda * sum(torch.sum(param ** 2) for param in self.actor.parameters())
+                    actor_loss_k = - self.critic(obs, mu, new_goal) + l2_reg
 
                     critic_loss.append(critic_loss_k)
                     actor_loss.append(actor_loss_k)
@@ -407,10 +424,10 @@ if __name__ == "__main__":
     agent = Policy()
     
     # FOR DEBUGGING
-    agent.train()
+    #agent.train()
 
     # plot logs
-    #agent.plot_training_logs()
+    agent.plot_training_logs()
 
     # test results
     #agent.test()
