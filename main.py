@@ -12,9 +12,9 @@ def evaluate(env=None, n_episodes=1, render=False):
     agent = Policy()
     agent.load()
 
-    env = gym.make("FetchReach-v3", max_episode_steps=100)
+    env = gym.make("FetchReach-v3", max_episode_steps=200)
     if render:
-        env = gym.make("FetchReach-v3", max_episode_steps=100, render_mode='human')
+        env = gym.make("FetchReach-v3", max_episode_steps=200, render_mode='human')
         
     rewards = []
     for episode in range(n_episodes):

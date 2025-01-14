@@ -29,6 +29,7 @@ class ReplayBuffer:
         self.epsilon = 0.001                    # small positicve constant to be addedd to delta_ji in order to avoid 0 probability 
 
         self.max_delta = self.epsilon           # initialized as self.epsilon
+        self.max_w = 0
 
     def push(self, obs, action, next_obs, done):
 
@@ -59,7 +60,7 @@ class ReplayBuffer:
             delta_array = experience[3]
             episode_delta += np.sum(np.abs(delta_array))
             K += len(delta_array)
-        # print('possible experience-goal combinations',K)        # K = 1225= H*(H-1)/2
+        #print('possible experience-goal combinations',K)        # K = 1225= H*(H-1)/2
         return episode_delta / K
        
     def set_probabilities(self):
@@ -100,7 +101,7 @@ class ReplayBuffer:
         return selected_episode_idx[0] # the index
     
     def sample_experience_and_goal(self, episode_idx):
-        # Goal prioritization: Sample j-th experience and i-th goal based on P'(j,1)
+        # Goal prioritization: Sample j-th experience and i-th goal based on P'(j,i)
         flattened_probabilities = []
         for prob in self.goal_prioritization_probs[episode_idx]:
             flattened_probabilities.extend(prob)
@@ -116,6 +117,49 @@ class ReplayBuffer:
                     # print('presumed new goal', self.buffer[episode_idx][0][j+1+i])              # check: it works!
                     return exp, new_goal, j, i                                          
                 count+=1
+
+    def sample_random_experience_and_future_goal(self, episode_idx):
+        """i have reimplemented the ""sample_experience_and_goal"" function that given the sampled episode sample an experience randomly 
+        and a future goal according to the future startegy
+        
+        PROBLEMS WITH THE NORMALIZATION FACTOR!!!!!!!"""
+        # # Goal prioritization: Sample randomly the j-th experience and sample the i-th goal based on P'(j,i)
+        # episode_probs = self.goal_prioritization_probs[episode_idx]
+        # j =  np.random.choice(len(self.buffer[episode_idx][0][:-1]))
+
+        # print('j with uniform probs', j)
+        # #future_probs = episode_probs[j+1:]
+        # #print(len(future_probs))
+
+        # # PROBLEMS WITH THE NORMALIZATION FACTOR!!!!!!!
+        # # update goal probabilities
+        # goal_norm_factor = 0
+        # for exp,experience in enumerate(self.buffer[episode_idx][0][:-1]):      # for exp = 1,.. H-1
+        #     delta_array = experience[3]
+        #     for i,delta_ji in enumerate(delta_array):                         # for i = exp+1,...H
+        #         if delta_ji == 0: raise ValueError("IMPOSSIBLE: delta_ji egual to 0")
+        #         delta_ji = np.abs(delta_ji) ** self.alpha_prime 
+        #         if exp == j:
+        #             print(len(delta_array))
+        #             self.goal_prioritization_probs[episode_idx][exp][i] = delta_ji
+        #         goal_norm_factor += delta_ji
+
+        # for exp in range(len(self.goal_prioritization_probs[episode_idx])):
+        #     for i,value in enumerate(self.goal_prioritization_probs[episode_idx][exp]):
+        #         self.goal_prioritization_probs[episode_idx][exp][i] =self.goal_prioritization_probs[episode_idx][exp][i]/goal_norm_factor
+
+        # future_probs = self.goal_prioritization_probs[episode_idx][j]
+        # print(future_probs)
+        # print('len future probs', len(future_probs))
+
+        # i = np.random.choice(len(future_probs), p=future_probs)
+        # print('i based on HGR', i)
+
+        # experience = self.buffer[episode_idx][0][j]
+        # new_goal = self.buffer[episode_idx][0][j+1+i]
+        # print('new goal sampled',new_goal)
+        # return experience, new_goal, j, i
+        pass
 
     def update_delta_and_probs(self, delta, episode, j,i):
         delta = np.abs(delta)
@@ -148,6 +192,7 @@ class ReplayBuffer:
                 self.goal_prioritization_probs[episode_idx][j][i] = delta_ji
                 goal_norm_factor += delta_ji
 
+        # Normalize probs
         for j in range(len(self.goal_prioritization_probs[episode_idx])):
             for i,value in enumerate(self.goal_prioritization_probs[episode_idx][j]):
                 self.goal_prioritization_probs[episode_idx][j][i] =self.goal_prioritization_probs[episode_idx][j][i]/goal_norm_factor
@@ -156,7 +201,11 @@ class ReplayBuffer:
         w_n = (1/len(self.buffer) * 1/self.episode_prioritization_probs[n]) ** self.beta
         w_ji = (2/(self.H*(self.H-1))  * 1/self.goal_prioritization_probs[n][j][i]) ** self.beta_prime
         w = w_ji * w_n
+        if w > self.max_w: self.max_w = w
         return w
+    
+    def get_max_w(self):
+        return self.max_w
     
     def __len__(self):
         buffer_size = 0

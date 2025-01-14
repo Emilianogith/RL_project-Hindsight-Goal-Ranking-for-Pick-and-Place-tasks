@@ -30,7 +30,6 @@ class Actor(nn.Module):
             nn.init.zeros_(layer.bias)
 
     def forward(self, state, goal):
-        #  Metti qualche batch normalization
         x = torch.cat([state, goal], dim=-1)
         x = F.relu(self.linear1(x))
         x = F.relu(self.linear2(x))
@@ -54,7 +53,7 @@ class Critic(nn.Module):
         x = torch.cat([state, action, goal], dim=-1)
         x = F.relu(self.linear1(x))
         x = F.relu(self.linear2(x))
-        x = self.linear3(x)             
+        x = self.linear3(x)            
         return x
 
 class Policy(nn.Module):
@@ -93,13 +92,16 @@ class Policy(nn.Module):
 
         # HYPERPARAMETERS
         self.epochs = 20000                         # n. of epochs during training. It is egual to the n. of episodes 
-        self.batch_size = 100                         # batch size
-        self.update_freq = 100                        # defines the network update frequency during training
+        self.batch_size = 50                         # batch size
+        self.update_freq = 1                        # defines the network update frequency during training
         self.H = 50                                 # the horizon of one episode. Keep in mind the episode ends if we collect negative rewards for 50 consecutive steps
         self.rho = 0.05                             # defines the distance to the goal in which the reward is positive. Used in compute_reward
         self.gamma = 0.98                           # discount factor
-        self.save_freq = 500                          # determines the after how much episodes the model is saved
+        self.save_freq = 100                          # determines the after how much episodes the model is saved
         self.tau = 0.05                            # parameter for the soft update
+        self.epsilon = 0.3                          # epsilon-greedy parameter
+        self.epsilon_decay=0.99
+        self.MAX_EPSILON =0.3
 
         # initialize the buffer
         self.replay_buffer = ReplayBuffer(capacity=1000000, episode_horizon=self.H)#10000)
@@ -129,7 +131,7 @@ class Policy(nn.Module):
         #print('actions: ', actions[0])
         return actions[0]
 
-    def noisy_action(self, observation, noise_factor, noise_type ='Uniform'):               # noise = {Uniform, Gaussian, Ornstein-Uhlenbeck}
+    def noisy_action(self, observation, noise_type ='Uniform'):               # noise_type = {Uniform, Gaussian, Ornstein-Uhlenbeck}
         self.actor.eval()
 
         # preprocessing
@@ -142,36 +144,30 @@ class Policy(nn.Module):
         # Improvement use Ornstein-Uhlenbeck noise
         if noise_type == 'Uniform':
             # Uniform noise in the range [-1, 1]
-            noise = np.random.uniform(-1, 1, size=actions.shape) * noise_factor
+            noise = np.random.uniform(-1, 1, size=actions.shape)* self.noise_factor
         if noise_type == 'Gaussian':
-            # Gaussian noise with mean 0 and standard deviation 0.2
-            noise = np.random.normal(0, 0.2, size=actions.shape) * noise_factor         
-        if noise_type == 'Ornstein-Uhlenbeck':
+            # Gaussian noise with mean 0 and standard deviation 0.2  
+            noise = 0.2 * np.random.randn(self.action_dim)  
+        if noise_type == 'Ornstein-Uhlenbeck': 
             pass
-            # Ornstein-Uhlenbeck process
-            # Implement ...
-            # ou_state += theta * (-ou_state) * self.dt + \
-            #                  self.sigma * np.sqrt(self.dt) * np.random.normal(size=self.action_dim)
-            # noise = self.ou_state * self.noise_factor      
-
-        # Implement epsilon greedy...
-
         actions += noise
+        #actions = np.clip(actions, -1, 1)
+        #  Epsilon-Greedy startegy to favor local exploration with prob self.epsilon
+        # actions += np.random.binomial(1, self.epsilon) * (
+        #         np.random.uniform(-1,1,actions.shape[0]) - actions)  
         return actions
     
-    def rollout(self, noise_factor=1, decay=0.999):
+    def rollout(self):
         obs, _ = self.env.reset()                                                      # obs contains the state and the goal
         done = False
 
         total_reward = 0
         for i in range(self.H):
             # Sample an action
-            action = self.noisy_action(obs, noise_factor)
+            action = self.noisy_action(obs)
             action_4dim = np.hstack([action, np.zeros(1)])                             # append the last element as 0 to get a 4-dim action
             next_obs, reward, terminated, truncated, info = self.env.step(action_4dim)
             done = False if i != self.H -1 else True
-
-            noise_factor *= decay
 
             # Store transition
             self.replay_buffer.push(obs, action, next_obs, done)
@@ -205,12 +201,19 @@ class Policy(nn.Module):
         critic_optimizer = optim.Adam(self.critic.parameters(), lr=lr_critic)
 
         start_time=time.time()
+        self.noise_factor = 1
+        self.noise_decay = 0.99
         # Training loop
         for epoch in range(self.start_epoch, self.epochs + 1):                # for each episode
             
             # Rollout phase
             total_reward = self.rollout()
-
+            self.noise_factor *= self.epsilon_decay
+            
+            # Epsilon_decay:
+            # if self.epsilon > self.MAX_EPSILON:
+            #     self.epsilon *= self.epsilon_decay
+                
             # Batch computation with update frequency
             if epoch % self.update_freq == 0:
                 self.replay_buffer.set_probabilities()                        # set the probabilities such that they sum up to 1 before sampling 
@@ -221,32 +224,36 @@ class Policy(nn.Module):
 
                 critic_loss = []
                 actor_loss = []
-                importance_sampling = []
+                # importance_sampling =[]
                 for k in range (self.batch_size):
                     episode_idx = self.replay_buffer.sample_episode()                                             # sample an episode
                     experience, new_goal, j, i = self.replay_buffer.sample_experience_and_goal(episode_idx)       # sample an experience with an hindsight goal according to the Future startegy
                                                                                                                   # here experience = (sj,aj,sj+1,delta_array, done)
+                    #print(f'episode_idx: {episode_idx}, j: {j}, i: {i}')
                     if experience[4] == True: raise ValueError('done=True?????')
 
-                    obs = torch.tensor(experience[0]['observation'], dtype=torch.float32).unsqueeze(0).to(self.device)
-                    action = torch.tensor(experience[1],dtype=torch.float32).unsqueeze(0).to(self.device)  
-                    next_obs = torch.tensor(experience[2]['observation'],dtype=torch.float32).unsqueeze(0).to(self.device)  
-                    new_goal = torch.from_numpy(new_goal).to(dtype=torch.float32).unsqueeze(0).to(self.device)  
+                    obs = torch.tensor(experience[0]['observation'], dtype=torch.float32).to(self.device)
+                    action = torch.tensor(experience[1],dtype=torch.float32).to(self.device)  
+                    next_obs = torch.tensor(experience[2]['observation'],dtype=torch.float32).to(self.device)  
+                    new_goal = torch.from_numpy(new_goal).to(dtype=torch.float32).to(self.device)  
 
-                    new_reward = self.compute_reward(next_obs.squeeze(0).cpu(),new_goal.squeeze(0).cpu()) 
+                    new_reward = self.compute_reward(next_obs.cpu(),new_goal.cpu()) 
 
                     # Compute importance sampling
                     w = self.replay_buffer.get_importance_sampling(episode_idx, j, i)
-                    importance_sampling.append(w)
+                    #importance_sampling.append(w)
 
                     with torch.no_grad():
                         target_mu = self.target_actor(next_obs, new_goal).detach()                                       # mu(s_(j+1) ||g_i)
                         next_Q_value = self.target_critic(next_obs, target_mu, new_goal).detach()                        # Q_target(s_(j+1), mu(s_(j+1) ||g_i) || g_i)
+                        
+                    target_return = new_reward + self.gamma * next_Q_value
+                    target_return = torch.clamp(target_return, -1 / (1 - self.gamma), 0)                        
                     
                     Q_value = self.critic(obs, action, new_goal)                                                         # Q(s_j, a_j || g_i)
                     
                     # Compute TD error
-                    delta = (new_reward + self.gamma * next_Q_value - Q_value).squeeze(0)
+                    delta = (target_return - Q_value).squeeze(0)
                     
                     # Insert delta in buffer and Update the probabilities
                     self.replay_buffer.update_delta_and_probs(delta.detach().item(), episode_idx, j, i)
@@ -256,27 +263,25 @@ class Policy(nn.Module):
 
                     mu = self.actor(obs, new_goal)
                     # L2-regularization
-                    l2_reg = l2_lambda * sum(torch.sum(param ** 2) for param in self.actor.parameters())
-                    actor_loss_k = - self.critic(obs, mu, new_goal) + l2_reg
+                    #l2_reg = l2_lambda * sum(torch.sum(param ** 2) for param in self.actor.parameters())
+                    actor_loss_k = - self.critic(obs, mu, new_goal) #+ l2_reg
 
                     critic_loss.append(critic_loss_k)
                     actor_loss.append(actor_loss_k)
 
                 # Update networks
-                max_w = max(importance_sampling)
+                #max_w = max(importance_sampling)
+                max_w = self.replay_buffer.get_max_w()
                 actor_loss = [loss / max_w for loss in actor_loss]
                 critic_loss = [loss / max_w for loss in critic_loss]
 
+                # MEAN Sum the losses to accumulate the gradients
                 actor_loss = torch.mean(torch.stack(actor_loss))
                 critic_loss = torch.mean(torch.stack(critic_loss))
 
-                # ## (Optional) clamp the actor gradients for robustness
-                # for param in self.actor.parameters():
-                #     param.grad = torch.clamp(param.grad, -10, 10)
-
                 # Actor update
                 actor_optimizer.zero_grad()
-                actor_loss.backward()  
+                actor_loss.backward()                  
                 actor_optimizer.step()
 
                 # Critic update
@@ -316,6 +321,7 @@ class Policy(nn.Module):
             target_param.data.copy_(self.tau * local_param.data + (1.0 - self.tau) * target_param.data)
 
     def save(self):
+        print('Saving the model and logs...')
         # Save the model
         torch.save({
             'actor': self.target_actor.state_dict(),
@@ -350,14 +356,15 @@ class Policy(nn.Module):
         self.target_critic.load_state_dict(checkpoint['critic'])
         print("weights loaded for actor and critic!")
 
+        # Load the current epoch
+        file_path = 'training_logs.json'
+        if os.path.exists(file_path):
+            with open(file_path, 'r') as f_load:
+                logs = json.load(f_load)
+                self.start_epoch = logs['n_episodes'] + 1
+
         # For training:
         if load_for_training:
-            # Load the current epoch
-            file_path = 'training_logs.json'
-            if os.path.exists(file_path):
-                with open(file_path, 'r') as f_load:
-                    logs = json.load(f_load)
-                    self.start_epoch = logs['n_episodes'] + 1
 
             # Load the buffer
             if os.path.exists('buffer.pkl'):
