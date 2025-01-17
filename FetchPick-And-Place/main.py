@@ -1,29 +1,33 @@
 import argparse
 import gymnasium as gym
 import mujoco
-import gymnasium_robotics
+#import gymnasium_robotics
 
 import numpy as np
 
 from DDPG import Policy
 
+#gym.register_envs(gymnasium_robotics)
 
 def evaluate(env=None, n_episodes=1, render=False):
-    agent = Policy()
-    agent.load()
+    #agent = Policy()
+    #agent.load()
 
-    env = gym.make("FetchReach-v3", max_episode_steps=200)
+    max_episode_steps=200
+    env = gym.make("FetchPickAndPlace-v3")
     if render:
-        env = gym.make("FetchReach-v3", max_episode_steps=200, render_mode='human')
+        env = gym.make("FetchPickAndPlace-v3", render_mode = 'human')
+        
         
     rewards = []
     for episode in range(n_episodes):
         total_reward = 0
         done = False
-        s, _ = env.reset()
-        while not done:
-            action = agent.act(s)
-            
+        s, _ = env.reset(seed=42)
+        print('initial state', s)
+        for _ in range(200):
+            #action = agent.act(s)
+            action = env.action_space.sample()
             s, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
             total_reward += reward
@@ -39,12 +43,16 @@ def train():
     agent.train()
     agent.save()
 
+def plot_graphics():
+    agent = Policy()
+    agent.plot_training_logs()
 
 def main():
     parser = argparse.ArgumentParser(description='Run training and evaluation')
     parser.add_argument('--render', action='store_true')
     parser.add_argument('-t', '--train', action='store_true')
     parser.add_argument('-e', '--evaluate', action='store_true')
+    parser.add_argument('-p', '--plot', action='store_true')
     args = parser.parse_args()
 
     if args.train:
@@ -52,6 +60,8 @@ def main():
 
     if args.evaluate:
         evaluate(render=args.render)
+    if args.plot:
+        plot_graphics()
 
     
 if __name__ == '__main__':

@@ -46,11 +46,21 @@ class ReplayBuffer:
         if done:
             self.terminated_last_episode = True
             self.buffer[-1] = [self.buffer[-1], self.compute_episode_delta(episode = self.buffer[-1])]
-        if len(self.buffer) > self.capacity:
-            print('poppato')
-            self.pop_buffer()
+            if len(self.buffer) > self.capacity:
+                #print('poppato')
+                self.pop_buffer()
 
     def pop_buffer(self):
+        # min_idx =0
+        # min_delta =1000
+        # for idx,episode in enumerate(self.buffer):
+        #     delta_episode = episode[1]
+        #     if delta_episode<min_delta:
+        #         min_delta=delta_episode
+        #         min_idx=idx
+        # self.buffer.pop(min_idx)
+
+        # the min idx is always the first
         self.buffer.pop(0)          # to replace the oldest experience. (have i to replace according to prioritization????)
 
     def compute_episode_delta(self, episode):
@@ -113,8 +123,8 @@ class ReplayBuffer:
             for i, future_experience in enumerate(self.buffer[episode_idx][0][j+1:]):
                 if count==sampled_index:
                     new_goal = future_experience[0]['achieved_goal']
-                    # print('new goal', new_goal)
-                    # print('presumed new goal', self.buffer[episode_idx][0][j+1+i])              # check: it works!
+                    #print('new goal', new_goal)
+                    #print('presumed new goal', self.buffer[episode_idx][0][j+1+i])              # check: it works!
                     return exp, new_goal, j, i                                          
                 count+=1
 
@@ -163,7 +173,7 @@ class ReplayBuffer:
 
     def update_delta_and_probs(self, delta, episode, j,i):
         delta = np.abs(delta)
-        self.buffer[episode][0][j][3][i] = delta
+        self.buffer[episode][0][j][3][i] = delta + self.epsilon 
 
         if delta > self.max_delta: 
             self.max_delta = delta + self.epsilon                                                 # small positicve constant to be addedd to delta_ji in order to avoid 0 probability
