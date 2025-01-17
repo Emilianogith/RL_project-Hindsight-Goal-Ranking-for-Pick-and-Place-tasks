@@ -1,31 +1,30 @@
 import argparse
 import gymnasium as gym
 import mujoco
-#import gymnasium_robotics
+import gymnasium_robotics
 
 import numpy as np
 
-from DDPG import Policy
+#from DDPG import Policy
 
-#gym.register_envs(gymnasium_robotics)
+gym.register_envs(gymnasium_robotics)
 
-def evaluate(env=None, n_episodes=1, render=False):
+def evaluate(env=None, n_episodes=6, render=False):
     #agent = Policy()
     #agent.load()
 
-    max_episode_steps=200
-    env = gym.make("FetchPickAndPlace-v3")
+    max_episode_steps=100
+    env = gym.make("FetchPickAndPlace-v4", max_episode_steps=max_episode_steps)
     if render:
-        env = gym.make("FetchPickAndPlace-v3", render_mode = 'human')
-        
+        env = gym.make("FetchPickAndPlace-v4", max_episode_steps=max_episode_steps, render_mode = 'human')
         
     rewards = []
     for episode in range(n_episodes):
         total_reward = 0
         done = False
-        s, _ = env.reset(seed=42)
+        s, _ = env.reset()
         print('initial state', s)
-        for _ in range(200):
+        for _ in range(max_episode_steps):
             #action = agent.act(s)
             action = env.action_space.sample()
             s, reward, terminated, truncated, info = env.step(action)

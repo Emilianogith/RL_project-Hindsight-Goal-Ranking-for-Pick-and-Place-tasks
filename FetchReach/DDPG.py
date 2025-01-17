@@ -77,7 +77,7 @@ class Policy(nn.Module):
         self.device = device
 
         # initialize the environment
-        self.env = gym.make("FetchReach-v3", render_mode=None)           #render_mode='human'
+        self.env = gym.make("FetchReach-v4", render_mode=None)           #render_mode='human'
         self.obs_space = self.env.observation_space
         self.action_space = self.env.action_space
 
@@ -106,7 +106,7 @@ class Policy(nn.Module):
         self.epsilon = 0.8                            # epsilon-greedy parameter
         self.EPOCH_EPSILON_DECAY_1 = 900
         self.EPOCH_EPSILON_DECAY_2 = 1500
-        self.MIN_EPSILON =0.3
+        self.MIN_EPSILON =0.5
 
         # initialize the buffer
         self.replay_buffer = ReplayBuffer(capacity=1000, episode_horizon=self.H)            # capacity=10000
@@ -205,7 +205,7 @@ class Policy(nn.Module):
         else:
             return -1
 
-    def train(self, lr_actor = 1e-3, lr_critic =1e-3, l2_lambda=0.5):  
+    def train(self, lr_actor = 1e-3, lr_critic =1e-3, l2_lambda=0.4):  
         # Load the weights if model.pt exists
         if os.path.exists('model.pt'):
             self.load(load_for_training=True)                                           # load target actor and critic
@@ -288,7 +288,7 @@ class Policy(nn.Module):
                     delta = (target_return - Q_value).squeeze(0)
                     
                     # Show some examples of the predicted Q_value during training
-                    # print('Q_value', Q_value, 'target_return', target_return, 'delta', delta, f'index j :{j} with future i: {i}')
+                    #print('Q_value', Q_value, 'target_return', target_return, 'next_Q_value', next_Q_value.detach(),'tgret',(new_reward + self.gamma * next_Q_value), f'index j :{j} with future i: {i}')
                     # if done ==1 or ( i==0): print('Q_value', Q_value, 'target_return', target_return, 'delta', delta, f'index j :{j} with future i: {i}')
                     
                     # Insert delta in buffer and Update the probabilities
@@ -425,27 +425,32 @@ class Policy(nn.Module):
             
             success_rate = []
             success = 0
+            per_episodes_evaluation =self.save_freq
             for i,rew in enumerate(logs['reward_per_episode']):
                 if rew > -50:
                     success +=1
                 if (i+1) % self.save_freq == 0:
-                    success_rate.append(success/logs['n_episodes'])
+                    success_rate.append(success/per_episodes_evaluation)         #logs['n_episodes']
+                if i % per_episodes_evaluation==0:
+                    success=0
+            time = [time * 0.1 for time in logs['training_time']]
 
             plot_logs(logs['reward_per_episode'], 
                       success_rate, 
-                      logs['training_time'],
+                      time,
                       logs['actor_loss'],
                       logs['critic_loss'],
-                      self.update_freq
+                      self.update_freq,
+                      per_episodes_evaluation =per_episodes_evaluation
                       )
 
         except FileNotFoundError:
             print("Error: File 'training_logs.json' not found.")
 
     def test(self, n_episodes=200):
-        agent.load()
+        self.load()
 
-        env = gym.make("FetchReach-v3", max_episode_steps=50)
+        env = gym.make("FetchReach-v4", max_episode_steps=50)
             
         rewards = []
         for episode in range(n_episodes):
@@ -453,7 +458,7 @@ class Policy(nn.Module):
             done = False
             s, _ = env.reset()
             while not done:
-                action = agent.act(s)
+                action = self.act(s)
                 
                 s, reward, terminated, truncated, info = env.step(action)
                 done = terminated or truncated

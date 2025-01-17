@@ -77,7 +77,7 @@ class Policy(nn.Module):
         self.device = device
 
         # initialize the environment
-        self.env = gym.make("FetchReach-v3", render_mode=None)           #render_mode='human'
+        self.env = gym.make("FetchPickAndPlace-v4", render_mode=None)           #render_mode='human'
         self.obs_space = self.env.observation_space
         self.action_space = self.env.action_space
 
@@ -288,7 +288,7 @@ class Policy(nn.Module):
                     delta = (target_return - Q_value).squeeze(0)
                     
                     # Show some examples of the predicted Q_value during training
-                    # print('Q_value', Q_value, 'target_return', target_return, 'delta', delta, f'index j :{j} with future i: {i}')
+                    #print('Q_value', Q_value, 'target_return', target_return, 'delta', delta, f'index j :{j} with future i: {i}')
                     # if done ==1 or ( i==0): print('Q_value', Q_value, 'target_return', target_return, 'delta', delta, f'index j :{j} with future i: {i}')
                     
                     # Insert delta in buffer and Update the probabilities
@@ -445,7 +445,7 @@ class Policy(nn.Module):
     def test(self, n_episodes=200):
         agent.load()
 
-        env = gym.make("FetchReach-v3", max_episode_steps=50)
+        env = gym.make("FetchPickAndPlace-v4", max_episode_steps=50)
             
         rewards = []
         for episode in range(n_episodes):

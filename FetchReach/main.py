@@ -12,18 +12,18 @@ def evaluate(env=None, n_episodes=6, render=False):
     agent = Policy()
     agent.load()
 
-    max_episode_steps=200
+    max_episode_steps=100
 
-    env = gym.make("FetchReach-v3", max_episode_steps=max_episode_steps)
+    env = gym.make("FetchReach-v4", max_episode_steps=max_episode_steps)
     if render:
-        env = gym.make("FetchReach-v3", max_episode_steps=max_episode_steps, render_mode='human')
+        env = gym.make("FetchReach-v4", max_episode_steps=max_episode_steps, render_mode='human')
         
     rewards = []
     for episode in range(n_episodes):
         total_reward = 0
         done = False
         s, _ = env.reset()
-        for _ in range(90):
+        for _ in range(max_episode_steps):
             action = agent.act(s)
             
             s, reward, terminated, truncated, info = env.step(action)
@@ -34,7 +34,6 @@ def evaluate(env=None, n_episodes=6, render=False):
         
     print('Mean Reward:', np.mean(rewards))
     env.close()
-
 
 def train():
     agent = Policy()
