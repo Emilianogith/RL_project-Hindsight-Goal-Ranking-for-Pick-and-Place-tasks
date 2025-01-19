@@ -9,12 +9,21 @@ conducted using the OpenAI Gym Fetch environment.
 
 ## FetchReach
 
+The task in Gym FetchReach is for the agent to move the robot's end-effector to a specified target position in space. 
+
 <div align="center">
   <img src="gif/Reach.gif" alt="Reach Animation" width="300" height="300">
 </div>
 
 ## FetchPickAndPlace
 
+In Gym FetchPickAndPlace, the agent must not only reach a target position but also manipulate an object to a desired location.
+
+<div align="center">
+  <img src="gif/pickandplace.gif" alt="Reach Animation" width="300" height="300">
+</div>
+
+Not highly effective due to limited training time, as the model was trained for only 3300 epochs!
 
 # Dependancies 
 
