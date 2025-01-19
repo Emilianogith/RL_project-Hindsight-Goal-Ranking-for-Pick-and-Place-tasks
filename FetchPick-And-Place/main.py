@@ -25,11 +25,8 @@ def evaluate(env=None, n_episodes=6, render=False):
         s, _ = env.reset()
         for _ in range(max_episode_steps):
             action = agent.act(s)
-            #action = env.action_space.sample()
-            #print('action', action)
-            #print('state',s)
+
             s, reward, terminated, truncated, info = env.step(action)
-            #print('reward',reward)
             done = terminated or truncated
             total_reward += reward
         

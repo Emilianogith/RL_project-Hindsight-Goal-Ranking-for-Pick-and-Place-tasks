@@ -2,9 +2,20 @@ import numpy as np
 import json
 
 class Normalizer:
+    """This class implements the Normalization startegy used to preprocess the inputs
+    
+    Parameters:
+        - size: the size of the vector to be normalized
+
+    main methods:
+        - update: this method update the local sums used to compute the statistics.
+        - recompute_stats: this method recompute the statistics of the normalizer(mean and std).
+        - normalize: this method apply the normalixzation function to the input vector 
+                     and return a normalized vector according to the current statistics.
+    """
     def __init__(self, size, eps=1e-2):
         self.size = size
-        self.eps = eps
+        self.eps=eps
 
         self.local_sum = np.zeros(self.size, np.float32)
         self.local_sumsq = np.zeros(self.size, np.float32)

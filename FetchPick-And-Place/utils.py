@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 def plot_logs(episode_rewards, success_rate, training_time, loss_actor, loss_critic, update_freq, per_episodes_evaluation):
     episodes = list(range(1, len(episode_rewards) + 1))
 
+    # Plot total reward
     plt.figure(figsize=(10, 6))
     plt.subplot(2, 2, 1)
     plt.plot(episodes, episode_rewards, label='Total Reward per Episode', color='b')
@@ -14,6 +15,7 @@ def plot_logs(episode_rewards, success_rate, training_time, loss_actor, loss_cri
     plt.legend()
     plt.grid(True)
 
+    # Plot Success rate 
     plt.subplot(2, 2, 3)
     plt.plot(training_time, success_rate, label='Success rate per training time', color='b')
     plt.xlabel('training time')
@@ -23,8 +25,8 @@ def plot_logs(episode_rewards, success_rate, training_time, loss_actor, loss_cri
     plt.grid(True)
 
     epochs = list(range(update_freq, (len(loss_critic)* update_freq) + 1, update_freq))
-    # Plot Actor Loss in the top subplot
-    plt.subplot(2, 2, 2)  # 2 rows, 1 column, first subplot
+    # Plot Actor Loss 
+    plt.subplot(2, 2, 2) 
     plt.plot(epochs,loss_actor, label='Actor Loss', color='b')
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
@@ -32,8 +34,8 @@ def plot_logs(episode_rewards, success_rate, training_time, loss_actor, loss_cri
     plt.legend()
     plt.grid(True)
 
-    # Plot Critic Loss in the bottom subplot
-    plt.subplot(2, 2, 4)  # 2 rows, 1 column, second subplot
+    # Plot Critic Loss 
+    plt.subplot(2, 2, 4)  
     plt.plot(epochs,loss_critic, label='Critic Loss', color='r')
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
@@ -48,6 +50,7 @@ def plot_logs(episode_rewards, success_rate, training_time, loss_actor, loss_cri
     plt.show()
 
 def plot_test(rewards):
+    """used to plot the total reward in some test experiments"""
     episodes = list(range(1, len(rewards) + 1))
 
     plt.figure(figsize=(10, 6))

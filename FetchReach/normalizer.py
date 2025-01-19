@@ -13,8 +13,9 @@ class Normalizer:
         - normalize: this method apply the normalixzation function to the input vector 
                      and return a normalized vector according to the current statistics.
     """
-    def __init__(self, size):
+    def __init__(self, size, eps=1e-2):
         self.size = size
+        self.eps=eps
 
         self.local_sum = np.zeros(self.size, np.float32)
         self.local_sumsq = np.zeros(self.size, np.float32)
