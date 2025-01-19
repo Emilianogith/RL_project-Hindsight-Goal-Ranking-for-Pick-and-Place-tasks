@@ -1,7 +1,6 @@
 import numpy as np
 import random
 
-
 class ReplayBuffer:
     def __init__(self, capacity, episode_horizon):
         """
@@ -32,7 +31,7 @@ class ReplayBuffer:
         self.max_w = 0
 
     def push(self, obs, action, next_obs, done):
-
+        """ this method add a new sample to the buffer"""
         if self.terminated_last_episode:
             self.buffer.append([])
             self.terminated_last_episode = False
@@ -51,6 +50,14 @@ class ReplayBuffer:
                 self.pop_buffer()
 
     def pop_buffer(self):
+        """This method remove an element of the buffer when it exceed the capacity
+
+            two ways of popping have been implemented:
+            -remove the episode with lower average TDerror
+            -remove the oldest episode
+
+            have been proved that they are egual so i kept the 2nd for efficiency reasons 
+        """
         # min_idx =0
         # min_delta =1000
         # for idx,episode in enumerate(self.buffer):
@@ -61,9 +68,13 @@ class ReplayBuffer:
         # self.buffer.pop(min_idx)
 
         # the min idx is always the first
-        self.buffer.pop(0)          # to replace the oldest experience. (have i to replace according to prioritization????)
+        self.buffer.pop(0)          # to replace the oldest experience.
 
     def compute_episode_delta(self, episode):
+        """This metod computes the episode delta.
+        Parameter:
+            - episode: the whole episode in the buffer 
+        """
         episode_delta = 0
         K = 0
         for experience in episode:
@@ -74,6 +85,9 @@ class ReplayBuffer:
         return episode_delta / K
        
     def set_probabilities(self):
+        """This function initialize the episode and experience-goal probabilities to be sampled
+            It is applied before sampling from the Replay Buffer to ensure that probs sum up to 1:
+        """
         # set goal_prioritization_probs
         self.episode_prioritization_probs = []
         self.goal_prioritization_probs = []
@@ -104,6 +118,7 @@ class ReplayBuffer:
         self.episode_prioritization_probs /= episode_norm_factor    
  
     def sample_episode(self):
+        """This method returns an episode idx from the buffer selected according to the average TDerror."""
         # Episode prioritization: Sample n-th episode for replaying based on P(n)
         indices = range(len(self.episode_prioritization_probs))
         
@@ -111,6 +126,7 @@ class ReplayBuffer:
         return selected_episode_idx[0] # the index
     
     def sample_experience_and_goal(self, episode_idx):
+        """This method returns an experience-goal couple (and relative indices) from the buffer, given the sempled episode index, selected according to the TDerror."""
         # Goal prioritization: Sample j-th experience and i-th goal based on P'(j,i)
         flattened_probabilities = []
         for prob in self.goal_prioritization_probs[episode_idx]:
@@ -129,7 +145,7 @@ class ReplayBuffer:
                 count+=1
 
     def sample_random_experience_and_future_goal(self, episode_idx):
-        """i have reimplemented the ""sample_experience_and_goal"" function that given the sampled episode sample an experience randomly 
+        """i have reimplemented the ""sample_experience_and_goal"" function that given the sampled episode, samples an experience randomly 
         and a future goal according to the future startegy
         
         PROBLEMS WITH THE NORMALIZATION FACTOR!!!!!!!"""
@@ -172,11 +188,12 @@ class ReplayBuffer:
         pass
 
     def update_delta_and_probs(self, delta, episode, j,i):
+        """This method update probabilities and replace the computed TDerror in the buffer"""
         delta = np.abs(delta)
         self.buffer[episode][0][j][3][i] = delta + self.epsilon 
 
         if delta > self.max_delta: 
-            self.max_delta = delta + self.epsilon                                                 # small positicve constant to be addedd to delta_ji in order to avoid 0 probability
+            self.max_delta = delta + self.epsilon                                                 # small positive constant to be addedd to delta_ji in order to avoid 0 probability
         
         self.buffer[episode][1] = self.compute_episode_delta(episode= self.buffer[episode][0])
         self.update_probabilities(episode)
@@ -208,6 +225,7 @@ class ReplayBuffer:
                 self.goal_prioritization_probs[episode_idx][j][i] =self.goal_prioritization_probs[episode_idx][j][i]/goal_norm_factor
 
     def get_importance_sampling(self,n,j,i):
+        """This function compute the importance sampling relative to experience-goal couple (j,i) and selected episode(n)"""
         w_n = (1/len(self.buffer) * 1/self.episode_prioritization_probs[n]) ** self.beta
         w_ji = (2/(self.H*(self.H-1))  * 1/self.goal_prioritization_probs[n][j][i]) ** self.beta_prime
         w = w_ji * w_n
@@ -215,9 +233,11 @@ class ReplayBuffer:
         return w
     
     def get_max_w(self):
+        """This function returns the max importance sampling"""
         return self.max_w
     
     def __len__(self):
+        """This function returns the size of the buffer in terms of samples"""
         buffer_size = 0
         for ep in range(len(self.buffer)):
             buffer_size += len(self.buffer[ep])

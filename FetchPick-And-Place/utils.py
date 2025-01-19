@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 
 # plot action noise
 
-def plot_logs(episode_rewards, success_rate, training_time, loss_actor, loss_critic, update_freq):
+def plot_logs(episode_rewards, success_rate, training_time, loss_actor, loss_critic, update_freq, per_episodes_evaluation):
     episodes = list(range(1, len(episode_rewards) + 1))
 
     plt.figure(figsize=(10, 6))
@@ -18,7 +18,7 @@ def plot_logs(episode_rewards, success_rate, training_time, loss_actor, loss_cri
     plt.plot(training_time, success_rate, label='Success rate per training time', color='b')
     plt.xlabel('training time')
     plt.ylabel('Success rate')
-    plt.title('Success rate per training time')
+    plt.title(f'Success rate per {per_episodes_evaluation} episodes')
     plt.legend()
     plt.grid(True)
 

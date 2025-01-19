@@ -61,15 +61,13 @@ class Critic(nn.Module):
         return x
 
 class Policy(nn.Module):
-    """implement DDPG with HGR buffer
+    """This class implements the DDPG learning algorithm with HGR strategy.
     
-    train on GPU:
-    -ensure that input state is on the device: state = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(device)
-    -ensure the ActorCritic network is on teh device: model = ActorCritic(state_dim, action_dim).to(device)
-    -Perform your training loop while ensuring that both your model and data are on the GPU during forward and backward passes.
-    
-    use: -target_actor
-         -target_critic
+    main methods:
+    - train: train the agent using the DDPG + HGR training algorithm 
+    - save: save the weights of Actor/Critic, the Replay Buffer and the training logs
+    - load: load the weights of Actor/Critic, the Replay Buffer and the training logs
+    - plot_training_logs: plot the training logs.
     """
 
     def __init__(self, device=torch.device("cuda" if torch.cuda.is_available() else "cpu")):
@@ -101,15 +99,15 @@ class Policy(nn.Module):
         self.H = 50                                   # the horizon of one episode. Keep in mind the episode ends if we collect negative rewards for 50 consecutive steps
         self.rho = 0.05                               # defines the distance to the goal in which the reward is positive. Used in compute_reward
         self.gamma = 0.98                             # discount factor
-        self.save_freq = 50                           # determines the after how much episodes the model is saved
+        self.save_freq = 100                          # determines the after how much episodes the model is saved
         self.tau = 0.05                               # parameter for the soft update
         self.epsilon = 0.8                            # epsilon-greedy parameter
         self.EPOCH_EPSILON_DECAY_1 = 900
         self.EPOCH_EPSILON_DECAY_2 = 1500
-        self.MIN_EPSILON =0.5
+        self.MIN_EPSILON =0.3
 
         # initialize the buffer
-        self.replay_buffer = ReplayBuffer(capacity=1000, episode_horizon=self.H)            # capacity=10000
+        self.replay_buffer = ReplayBuffer(capacity=1000, episode_horizon=self.H)
 
         # Initialize the logs for the evaluation
         self.training_logs = {
@@ -117,15 +115,25 @@ class Policy(nn.Module):
                 "reward_per_episode": [],
                 "actor_loss": [],
                 "critic_loss": [],
-                "training_time": []
+                "training_time": [],
+                "win_rate":[]
             }
         self.start_epoch = 1
 
+        # Initialize the normalizers
         self.state_normalizer = Normalizer(self.state_dim)
         self.goal_normalizer = Normalizer(self.goal_dim)
 
     def act(self, observation):
-        """ used only in the main.py it gets one state as input and return the actions"""
+        """ Determines the action(s) to take based on the given observation (state).
+        This method is used only in main.py. It takes a single observation as input and returns the corresponding action as determined by the agent's policy.
+
+        Parameters:
+            observation: The current state of the environment.
+
+        Returns:
+            The selected action(s) based on the input observation.
+        """
         self.target_actor.eval()
         
         # preprocessing
@@ -139,10 +147,21 @@ class Policy(nn.Module):
             actions = np.array(self.target_actor(state, desired_goal))
 
         actions = np.hstack([actions, np.zeros((actions.shape[0], 1))])                # add 0 as the 4-th actions (in Reach task it is useless)
-        #print('actions: ', actions[0])
         return actions[0]
 
     def noisy_action(self, observation, noise_type ='Gaussian'):                       # noise_type = {Uniform, Gaussian, Ornstein-Uhlenbeck}
+        """ This method takes a single observation as input and returns the action selected by the behavior policy.
+            the behavioral policy is: beta = mu + N.
+            Epsilon greedy strategy has been adopted to guarantee sufficient exploration.
+
+        Parameters:
+            observation: The current state of the environment.
+            noise_type: The noise type to be added to the agent deterministic policy.
+                        It can be {Uniform, Gaussian, Ornstein-Uhlenbeck}
+
+        Returns:
+            The action according to the behavior policy.
+        """
         self.actor.eval()
 
         # preprocessing
@@ -157,12 +176,10 @@ class Policy(nn.Module):
 
         # Noise types:
         if noise_type == 'Uniform':
-            # Uniform noise in the range [-1, 1]
-            noise = np.random.uniform(-1, 1, size=actions.shape)* self.noise_factor
+            noise = np.random.uniform(-1, 1, size=actions.shape)                       # Uniform noise in the range [-1, 1]
         if noise_type == 'Gaussian':
-            # Gaussian noise with mean 0 and standard deviation 0.2  
-            noise = 0.2 * np.random.randn(self.action_dim)  
-        if noise_type == 'Ornstein-Uhlenbeck': 
+            noise = 0.2 * np.random.randn(self.action_dim)                             # Gaussian noise with mean 0 and standard deviation 0.2  
+        if noise_type == 'Ornstein-Uhlenbeck':                                         # not implemented
             pass
         actions += noise
         actions = np.clip(actions, -1, 1)
@@ -173,7 +190,10 @@ class Policy(nn.Module):
         return actions
     
     def rollout(self):
-        obs, _ = self.env.reset()                                                      # obs contains the state and the goal
+        """This function implements the rollout phase that generates the training data.
+            the selected behavior action is selected according to 'noisy_action' method
+        """
+        obs, _ = self.env.reset()                                 # obs contains the state and the goal
         done = False
 
         total_reward = 0
@@ -194,18 +214,21 @@ class Policy(nn.Module):
 
             obs = next_obs
             total_reward += reward
-        return total_reward                                                             # for the evaluation metric
+        return total_reward                   # for the evaluation metric
 
     def compute_reward(self, next_obs, new_goal):
+        """This function computes the reward:
+                reward=0    if the distance of end-effector from the goal is < tau
+                reward=-1   otherwise         
+        """
         ee_position = next_obs[:-7]
         distance_form_the_goal = np.linalg.norm(np.array(ee_position) - np.array(new_goal))
-        # print('distance_form_the_goal',distance_form_the_goal)
         if distance_form_the_goal < self.rho:
             return 0
         else:
             return -1
 
-    def train(self, lr_actor = 1e-3, lr_critic =1e-3, l2_lambda=0.4):  
+    def train(self, lr_actor = 1e-3, lr_critic =1e-3, l2_lambda=0.5):  
         # Load the weights if model.pt exists
         if os.path.exists('model.pt'):
             self.load(load_for_training=True)                                           # load target actor and critic
@@ -238,7 +261,7 @@ class Policy(nn.Module):
                 
             # Batch computation with update frequency
             if epoch % self.update_freq == 0:
-                self.replay_buffer.set_probabilities()                        # set the probabilities such that they sum up to 1 before sampling 
+                self.replay_buffer.set_probabilities()                        # set the probabilities in such a way that they sum up to 1 before sampling 
 
                 # set the actor-critic in training mode 
                 self.actor.train()
@@ -274,11 +297,6 @@ class Policy(nn.Module):
                         target_mu = self.target_actor(next_obs, new_goal).detach()                                   # mu(s_(j+1) ||g_i)
                         next_Q_value = self.target_critic(next_obs, target_mu, new_goal).detach()                    # Q_target(s_(j+1), mu(s_(j+1) ||g_i) || g_i)
                     
-                    # use termination episode    
-                    # if new_reward==0: done=1
-                    # else: done =0
-                    # target_return = new_reward + (1-done) * self.gamma * next_Q_value
-
                     target_return = new_reward + self.gamma * next_Q_value
                     target_return = torch.clamp(target_return, -1 / (1 - self.gamma), 0)                        
                     
@@ -286,11 +304,7 @@ class Policy(nn.Module):
 
                     # Compute TD error
                     delta = (target_return - Q_value).squeeze(0)
-                    
-                    # Show some examples of the predicted Q_value during training
-                    #print('Q_value', Q_value, 'target_return', target_return, 'next_Q_value', next_Q_value.detach(),'tgret',(new_reward + self.gamma * next_Q_value), f'index j :{j} with future i: {i}')
-                    # if done ==1 or ( i==0): print('Q_value', Q_value, 'target_return', target_return, 'delta', delta, f'index j :{j} with future i: {i}')
-                    
+                   
                     # Insert delta in buffer and Update the probabilities
                     self.replay_buffer.update_delta_and_probs(delta.detach().item(), episode_idx, j, i)
 
@@ -337,6 +351,10 @@ class Policy(nn.Module):
 
             # Save after 'save_freq' epochs
             if (epoch) % self.save_freq == 0:
+
+                # Evaluate current win rate
+                self.training_logs['win_rate'] = self.test()
+
                 current_time = time.time()
                 self.training_logs['training_time'].append((current_time-start_time)/3600)
                 self.training_logs['n_episodes'] = epoch
@@ -348,8 +366,10 @@ class Policy(nn.Module):
                 "reward_per_episode": [],
                 "actor_loss": [],
                 "critic_loss": [],
-                "training_time":[]
+                "training_time":[],
+                "win_rate":[]
             }
+                start_time = current_time
 
     def soft_update(self, target_net, main_net):
         # Soft update for target net
@@ -369,12 +389,12 @@ class Policy(nn.Module):
         if os.path.exists(file_path):
             with open(file_path, 'r') as fl:
                 old_data = json.load(fl)
+            old_data['win_rate'].extend(self.training_logs['win_rate'])
             old_data['training_time'].append(old_data['training_time'][-1]+self.training_logs['training_time'][-1])
             old_data['n_episodes'] = self.training_logs['n_episodes']
             old_data['reward_per_episode'].extend(self.training_logs['reward_per_episode'])
             old_data['actor_loss'].extend(self.training_logs['actor_loss'])
             old_data['critic_loss'].extend(self.training_logs['critic_loss'])
-        
         else:
             old_data = self.training_logs
 
@@ -419,89 +439,49 @@ class Policy(nn.Module):
                     print('max_delta', self.replay_buffer.max_delta)
 
     def plot_training_logs(self):
+        """ Plot the evaluation metrics used for evaluating the training:
+            -Total Reward per Episode during Training: used for evaluate exploration
+            -Success rate per training time: tested with the test function
+            -Actor Loss
+            -Critic Loss
+        """
         try:
             with open('training_logs.json', 'r') as f:
                 logs = json.load(f)
-            
-            success_rate = []
-            success = 0
-            per_episodes_evaluation =self.save_freq
-            for i,rew in enumerate(logs['reward_per_episode']):
-                if rew > -50:
-                    success +=1
-                if (i+1) % self.save_freq == 0:
-                    success_rate.append(success/per_episodes_evaluation)         #logs['n_episodes']
-                if i % per_episodes_evaluation==0:
-                    success=0
-            time = [time * 0.1 for time in logs['training_time']]
 
             plot_logs(logs['reward_per_episode'], 
-                      success_rate, 
-                      time,
+                      logs['win_rate'], 
+                      logs['training_time'],
                       logs['actor_loss'],
                       logs['critic_loss'],
                       self.update_freq,
-                      per_episodes_evaluation =per_episodes_evaluation
+                      per_episodes_evaluation =50
                       )
 
         except FileNotFoundError:
             print("Error: File 'training_logs.json' not found.")
 
-    def test(self, n_episodes=200):
-        self.load()
-
-        env = gym.make("FetchReach-v4", max_episode_steps=50)
-            
-        rewards = []
+    def test(self, n_episodes=50):
+        """ test the learned policy in 50 episodes"""
+        print('testing...')
+        win_rate = 0
         for episode in range(n_episodes):
             total_reward = 0
-            done = False
-            s, _ = env.reset()
-            while not done:
+            s, _ = self.env.reset()
+            for _ in range(50):
                 action = self.act(s)
-                
-                s, reward, terminated, truncated, info = env.step(action)
-                done = terminated or truncated
+                s, reward, terminated, truncated, info = self.env.step(action)
                 total_reward += reward
-            
-            rewards.append(total_reward)
-            
-        print(f'Mean Reward in {n_episodes} episodes:', np.mean(rewards))
-        plot_test(rewards)
+            # compute if a win occurred in the episode
+            if total_reward != -50:
+                win_rate+=1
+
+        win_rate /= n_episodes
+        print(f'Win rate in {n_episodes} episodes:', win_rate)
+        return [win_rate]
 
     def to(self, device):
         ret = super().to(device)
         ret.device = device
         return ret
     
-
-
-if __name__ == "__main__":
-    agent = Policy()
-    
-    # FOR DEBUGGING
-    #agent.train()
-
-    # plot logs
-    #agent.plot_training_logs()
-
-    # test results
-    agent.test()
-
-    # debug if the action depends on the goal
-    #agent.load()
-
-    # env = gym.make("FetchReach-v3", max_episode_steps=50)
-        
-    # rewards = []
-    # for episode in range(5):
-    #     total_reward = 0
-    #     done = False
-    #     s, _ = env.reset()
-    #     action = agent.act(s)
-    #     next_s, reward, terminated, truncated, info= env.step(action)
-    #     print('initial state:' , s)
-    #     print('action taken', action)
-    #     #print('Next state:' , next_s)
-
-   

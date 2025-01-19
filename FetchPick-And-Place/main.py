@@ -5,13 +5,13 @@ import gymnasium_robotics
 
 import numpy as np
 
-#from DDPG import Policy
+from DDPG import Policy
 
 gym.register_envs(gymnasium_robotics)
 
 def evaluate(env=None, n_episodes=6, render=False):
-    #agent = Policy()
-    #agent.load()
+    agent = Policy()
+    agent.load()
 
     max_episode_steps=100
     env = gym.make("FetchPickAndPlace-v4", max_episode_steps=max_episode_steps)
@@ -23,11 +23,13 @@ def evaluate(env=None, n_episodes=6, render=False):
         total_reward = 0
         done = False
         s, _ = env.reset()
-        print('initial state', s)
         for _ in range(max_episode_steps):
-            #action = agent.act(s)
-            action = env.action_space.sample()
+            action = agent.act(s)
+            #action = env.action_space.sample()
+            #print('action', action)
+            #print('state',s)
             s, reward, terminated, truncated, info = env.step(action)
+            #print('reward',reward)
             done = terminated or truncated
             total_reward += reward
         
@@ -37,8 +39,8 @@ def evaluate(env=None, n_episodes=6, render=False):
     env.close()
 
 
-def train():
-    agent = Policy()
+def train(render):
+    agent = Policy(render)
     agent.train()
     agent.save()
 
@@ -55,7 +57,7 @@ def main():
     args = parser.parse_args()
 
     if args.train:
-        train()
+        train(render=args.render)
 
     if args.evaluate:
         evaluate(render=args.render)

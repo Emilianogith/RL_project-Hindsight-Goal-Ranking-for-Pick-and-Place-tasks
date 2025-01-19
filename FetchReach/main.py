@@ -12,7 +12,7 @@ def evaluate(env=None, n_episodes=6, render=False):
     agent = Policy()
     agent.load()
 
-    max_episode_steps=100
+    max_episode_steps=50
 
     env = gym.make("FetchReach-v4", max_episode_steps=max_episode_steps)
     if render:

@@ -18,7 +18,7 @@ from normalizer import Normalizer
 
 # Define the actor-critic model
 class Actor(nn.Module):
-    def __init__(self, state_dim, action_dim, goal_dim, hidden_dim=320, hidden_dim2 = 256):
+    def __init__(self, state_dim, action_dim, goal_dim, hidden_dim=480, hidden_dim2 = 256):
         super(Actor, self).__init__()
 
         self.linear1 = nn.Linear(state_dim + goal_dim, hidden_dim)
@@ -72,17 +72,20 @@ class Policy(nn.Module):
          -target_critic
     """
 
-    def __init__(self, device=torch.device("cuda" if torch.cuda.is_available() else "cpu")):
+    def __init__(self, render = False, device=torch.device("cuda" if torch.cuda.is_available() else "cpu")):
         super(Policy, self).__init__()
         self.device = device
 
         # initialize the environment
-        self.env = gym.make("FetchPickAndPlace-v4", render_mode=None)           #render_mode='human'
+        if render:
+            self.env = gym.make("FetchPickAndPlace-v4", render_mode='human')
+        else:
+            self.env = gym.make("FetchPickAndPlace-v4")           #render_mode='human'
         self.obs_space = self.env.observation_space
         self.action_space = self.env.action_space
 
         self.state_dim = self.obs_space['observation'].shape[0]
-        self.action_dim = self.action_space.shape[0] - 1 
+        self.action_dim = self.action_space.shape[0]
         self.goal_dim = self.obs_space['desired_goal'].shape[0]
 
         # initialize the Actor and the Critic 
@@ -104,9 +107,9 @@ class Policy(nn.Module):
         self.save_freq = 50                           # determines the after how much episodes the model is saved
         self.tau = 0.05                               # parameter for the soft update
         self.epsilon = 0.8                            # epsilon-greedy parameter
-        self.EPOCH_EPSILON_DECAY_1 = 900
-        self.EPOCH_EPSILON_DECAY_2 = 1500
-        self.MIN_EPSILON =0.3
+        self.EPOCH_EPSILON_DECAY_1 = 800
+        self.EPOCH_EPSILON_DECAY_2 = 1400
+        self.MIN_EPSILON =0.5
 
         # initialize the buffer
         self.replay_buffer = ReplayBuffer(capacity=1000, episode_horizon=self.H)            # capacity=10000
@@ -138,7 +141,6 @@ class Policy(nn.Module):
         with torch.no_grad():
             actions = np.array(self.target_actor(state, desired_goal))
 
-        actions = np.hstack([actions, np.zeros((actions.shape[0], 1))])                # add 0 as the 4-th actions (in Reach task it is useless)
         #print('actions: ', actions[0])
         return actions[0]
 
@@ -158,7 +160,7 @@ class Policy(nn.Module):
         # Noise types:
         if noise_type == 'Uniform':
             # Uniform noise in the range [-1, 1]
-            noise = np.random.uniform(-1, 1, size=actions.shape)* self.noise_factor
+            noise = np.random.uniform(-1, 1, size=actions.shape)
         if noise_type == 'Gaussian':
             # Gaussian noise with mean 0 and standard deviation 0.2  
             noise = 0.2 * np.random.randn(self.action_dim)  
@@ -170,6 +172,10 @@ class Policy(nn.Module):
         # Epsilon-Greedy startegy to favor local exploration with prob self.epsilon
         actions += np.random.binomial(1, self.epsilon) * (
                 np.random.uniform(-1,1,actions.shape[0]) - actions)  
+        
+        if np.random.rand() < 0.7:
+            actions[3] = np.random.uniform(-1,1)
+
         return actions
     
     def rollout(self):
@@ -178,10 +184,16 @@ class Policy(nn.Module):
 
         total_reward = 0
         for i in range(self.H):
+
+            # Epsilon greedy exploration: only when the block is in the gripper add exploration noise 
+            # if self.is_in_gripper(obs['observation']):
+            #     self.epsilon = 0.8
+            # if i == int(self.H/2):
+            #     self.epsilon = 0.8
+
             # Sample an action
             action = self.noisy_action(obs)
-            action_4dim = np.hstack([action, np.zeros(1)])                             # append the last element as 0 to get a 4-dim action
-            next_obs, reward, terminated, truncated, info = self.env.step(action_4dim)
+            next_obs, reward, terminated, truncated, info = self.env.step(action)
             done = False if i != self.H -1 else True
 
             # Store transition
@@ -196,14 +208,29 @@ class Policy(nn.Module):
             total_reward += reward
         return total_reward                                                             # for the evaluation metric
 
-    def compute_reward(self, next_obs, new_goal):
-        ee_position = next_obs[:-7]
-        distance_form_the_goal = np.linalg.norm(np.array(ee_position) - np.array(new_goal))
-        # print('distance_form_the_goal',distance_form_the_goal)
-        if distance_form_the_goal < self.rho:
-            return 0
-        else:
+    def compute_reward(self, next_obs, new_goal, desired_goal):
+        #ee_position = next_obs[:3]
+        block_position = next_obs[3:6]
+        #distance_ee_form_the_block = np.linalg.norm(np.array(ee_position) - np.array(block_position))
+        in_gripper = self.is_in_gripper(next_obs)
+        if in_gripper:
+            # penalize if the gripper does't move the block 
+            if (block_position != new_goal).all() or (new_goal == desired_goal).all():
+                distance_block_form_the_goal = np.linalg.norm(np.array(block_position) - np.array(new_goal))
+                if distance_block_form_the_goal < self.rho:
+                    #print(f'in_gripper: {in_gripper}, block_position: {block_position},new_goal: {new_goal}, distance_block_form_the_goal: {distance_block_form_the_goal}, new_reward: {0}')
+                    return 0
+                #print(f'in_gripper: {in_gripper}, distance_block_form_the_goal: {distance_block_form_the_goal}, new_reward: {-1}')
             return -1
+        return -1.5
+    
+    def is_in_gripper(self, state):
+        relative_position = state[6:9]
+        relative_distance = np.linalg.norm(relative_position)
+        if relative_distance < self.tau:
+            return True
+        else: return False
+
 
     def train(self, lr_actor = 1e-3, lr_critic =1e-3, l2_lambda=0.5):  
         # Load the weights if model.pt exists
@@ -225,16 +252,16 @@ class Policy(nn.Module):
         # Training loop
         for epoch in range(self.start_epoch, self.epochs + 1):                # for each episode
             
+            # Epsilon_decay:
+            if epoch > self.EPOCH_EPSILON_DECAY_1 and epoch < self.EPOCH_EPSILON_DECAY_2: self.epsilon= 0.7
+            elif epoch >= self.EPOCH_EPSILON_DECAY_2: self.epsilon= self.MIN_EPSILON
+            
             # Rollout phase
             total_reward = self.rollout()
             
             # Recompute mean and std for the Normalizers
             self.state_normalizer.recompute_stats()
             self.goal_normalizer.recompute_stats()
-            
-            # Epsilon_decay:
-            if epoch > self.EPOCH_EPSILON_DECAY_1 and epoch < self.EPOCH_EPSILON_DECAY_2: self.epsilon= 0.7
-            elif epoch >= self.EPOCH_EPSILON_DECAY_2: self.epsilon= self.MIN_EPSILON
                 
             # Batch computation with update frequency
             if epoch % self.update_freq == 0:
@@ -252,10 +279,11 @@ class Policy(nn.Module):
                     experience, new_goal, j, i = self.replay_buffer.sample_experience_and_goal(episode_idx)       # sample an experience with an hindsight goal according to the Future startegy
                                                                                                                   # here experience = (sj,aj,sj+1,delta_array, done)
                     # Show an example of sampled idx
-                    # print(f'episode_idx: {episode_idx}, j: {j}, i: {i}')
+                    #print(f'episode_idx: {episode_idx}, j: {j}, i: {i}')
 
                     next_obs = experience[2]['observation']
-                    new_reward = self.compute_reward(next_obs,new_goal)
+                    desired_goal = experience[2]['desired_goal']
+                    new_reward = self.compute_reward(next_obs,new_goal,desired_goal)
 
                     # Normalize the inputs
                     normalized_state = self.state_normalizer.normalize(experience[0]['observation'])
@@ -350,6 +378,7 @@ class Policy(nn.Module):
                 "critic_loss": [],
                 "training_time":[]
             }
+                start_time = current_time
 
     def soft_update(self, target_net, main_net):
         # Soft update for target net
@@ -425,18 +454,26 @@ class Policy(nn.Module):
             
             success_rate = []
             success = 0
+            per_episodes_evaluation =self.save_freq
             for i,rew in enumerate(logs['reward_per_episode']):
                 if rew > -50:
                     success +=1
                 if (i+1) % self.save_freq == 0:
-                    success_rate.append(success/logs['n_episodes'])
+                    success_rate.append(success/per_episodes_evaluation)         #logs['n_episodes']
+                if i % per_episodes_evaluation==0:
+                    success=0
+
+            elapsed_time = []
+            for step_time in  logs['training_time']:
+                elapsed_time.append((elapsed_time[-1] if elapsed_time != [] else 0) + step_time)
 
             plot_logs(logs['reward_per_episode'], 
                       success_rate, 
-                      logs['training_time'],
+                      elapsed_time,
                       logs['actor_loss'],
                       logs['critic_loss'],
-                      self.update_freq
+                      self.update_freq,
+                      per_episodes_evaluation =per_episodes_evaluation
                       )
 
         except FileNotFoundError:
@@ -475,28 +512,13 @@ if __name__ == "__main__":
     agent = Policy()
     
     # FOR DEBUGGING
-    #agent.train()
+    agent.train()
 
     # plot logs
     #agent.plot_training_logs()
 
     # test results
-    agent.test()
+    #agent.test()
 
-    # debug if the action depends on the goal
-    #agent.load()
-
-    # env = gym.make("FetchReach-v3", max_episode_steps=50)
-        
-    # rewards = []
-    # for episode in range(5):
-    #     total_reward = 0
-    #     done = False
-    #     s, _ = env.reset()
-    #     action = agent.act(s)
-    #     next_s, reward, terminated, truncated, info= env.step(action)
-    #     print('initial state:' , s)
-    #     print('action taken', action)
-    #     #print('Next state:' , next_s)
 
    
